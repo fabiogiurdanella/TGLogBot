@@ -25,18 +25,19 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 
-def split_message(message, chunk_size=4096):
-    return [message[i:i+chunk_size] for i in range(0, len(message), chunk_size)]
-
 def send_telegram_message(text: str) -> None:
     """Invia `text` alla chat Telegram specificata."""
     try:
         # Telegram ha un limite di 4096 caratteri per messaggio
-        for chunk in split_message(text):
-            # Invia i chunk separatamente
-            asyncio.run(bot.send_message(chat_id=CHAT_ID, text=chunk))
-            logging.info("Messaggio inviato: %s", chunk[:50])  # Log dei primi 50 caratteri
+        # Estraggo, a partire dalla fine, solo la stringa che inizia per la prima occorrenza di CONSOLE
 
+        if len(text) > 4096:
+            text = text[-4096:]
+        
+        logging.info("Invio messaggio Telegram: %s", text)
+        text = text.rsplit("CONSOLE", 1)[-1].strip()
+
+        asyncio.run(bot.send_message(chat_id=CHAT_ID, text=text))
     except TelegramError as exc:
         logging.error("Errore Telegram: %s", exc)
 
