@@ -9,7 +9,7 @@ from telegram.error import TelegramError
 BOT_TOKEN       = os.getenv("BOT_TOKEN")        # token BotFather
 CHAT_ID         = os.getenv("CHAT_ID")          # chat / gruppo di destinazione
 CONTAINER_NAME  = os.getenv("CONTAINER_NAME")   # nome o ID del container
-LOG_REGEX       = os.getenv("LOG_REGEX", None)  # es. "ERROR|WARN"
+LOG_REGEX       = os.getenv("LOG_REGEX", None)      # es. "ERROR|WARN"
 # -----------------------------------------------------------------
 
 if not all([BOT_TOKEN, CHAT_ID, CONTAINER_NAME]):

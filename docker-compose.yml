@@ -8,7 +8,7 @@ services:
       - BOT_TOKEN=${BOT_TOKEN}
       - CHAT_ID=${CHAT_ID}
       - CONTAINER_NAME=${CONTAINER_NAME}
-      - LOG_REGEX=${LOG_REGEX:-ERROR|WARN}  # valore di default se non specificato
+      - LOG_REGEX=${LOG_REGEX:-ERROR|WARN|INFO}  # valore di default se non specificato
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
