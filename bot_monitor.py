@@ -3,6 +3,7 @@ import re
 import logging
 from docker import from_env
 from telegram import Bot
+import asyncio
 from telegram.error import TelegramError
 
 # --- Config da variabili d'ambiente ------------------------------
@@ -27,7 +28,7 @@ logging.basicConfig(
 def send_telegram_message(text: str) -> None:
     """Invia `text` alla chat Telegram specificata."""
     try:
-        bot.send_message(chat_id=CHAT_ID, text=text)
+        asyncio.run(bot.send_message(chat_id=CHAT_ID, text=text))
     except TelegramError as exc:
         logging.error("Errore Telegram: %s", exc)
 
