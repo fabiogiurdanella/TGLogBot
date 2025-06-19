@@ -34,8 +34,9 @@ def send_telegram_message(text: str) -> None:
         if len(text) > 4096:
             text = text[-4096:]
         
-        logging.info("Invio messaggio Telegram: %s", text)
         text = text.rsplit("CONSOLE", 1)[-1].strip()
+        if not text:
+            return  # niente da inviare
 
         asyncio.run(bot.send_message(chat_id=CHAT_ID, text=text))
     except TelegramError as exc:
