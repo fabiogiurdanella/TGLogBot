@@ -10,7 +10,7 @@ from telegram.error import TelegramError
 BOT_TOKEN       = os.getenv("BOT_TOKEN")        # token BotFather
 CHAT_ID         = os.getenv("CHAT_ID")          # chat / gruppo di destinazione
 CONTAINER_NAME  = os.getenv("CONTAINER_NAME")   # nome o ID del container
-LOG_REGEX       = os.getenv("LOG_REGEX", None)      # es. "ERROR|WARN"
+LOGGER_NAME     = os.getenv("LOGGER_NAME")           # nome del logger Python
 # -----------------------------------------------------------------
 
 if not all([BOT_TOKEN, CHAT_ID, CONTAINER_NAME]):
@@ -40,28 +40,20 @@ def main() -> None:
     # stream=True restituisce un generatore che blocca finché arrivano log
     log_stream = container.logs(stream=True, follow=True, tail=0)
 
-    pattern = re.compile(LOG_REGEX) if LOG_REGEX else None
-
     for raw_line in log_stream:
         line = raw_line.decode("utf-8", errors="replace").rstrip()
 
-        if pattern and not pattern.search(line):
-            continue  # salta le righe che non combaciano con il filtro
-
-        # Estrai l'ultima sottostringa che contiene un elemento della regex
-        last_match = None
-        if pattern:
-            matches = list(pattern.finditer(line))
-            if matches:
-                last_match = matches[-1]
-                # Prendi la sottostringa dalla posizione dell'ultimo match fino alla fine
-                line = line[last_match.start():]
-
-        # Controllo che la sottostringa non sia vuota e non superi 4096 caratteri
-        if line and len(line) > 4096:
-            line = line[-4096:]
-        if line:
-            send_telegram_message(f"[{CONTAINER_NAME}] {line}")
+        # Invia solo se LOGGER_NAME è presente nella riga
+        if LOGGER_NAME and LOGGER_NAME in line:
+            # Estrai la sottostringa dopo la prima occorrenza di LOGGER_NAME
+            msg = line.split(LOGGER_NAME, 1)[-1].lstrip(" -:")
+            # Controlla che la stringa non sia vuota e non superi 4096 caratteri
+            if msg:
+                if len(msg) > 4096:
+                    msg = msg[-4096:]
+                send_telegram_message(f"[{CONTAINER_NAME}] {msg}")
+                # Timeout per evitare flood
+                asyncio.run(asyncio.sleep(0.5))
 
 if __name__ == "__main__":
     try:
