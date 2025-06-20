@@ -28,13 +28,10 @@ logging.basicConfig(
 def send_telegram_message(text: str) -> None:
     """Invia `text` alla chat Telegram specificata."""
     try:
-        # Telegram ha un limite di 4096 caratteri per messaggio
-        if len(text) > 4096:
-            text = text[-4096:]
-            
         asyncio.run(bot.send_message(chat_id=CHAT_ID, text=text))
     except TelegramError as exc:
         logging.error("Errore Telegram: %s", exc)
+
 
 def main() -> None:
     container = dockercli.containers.get(CONTAINER_NAME)
@@ -51,8 +48,20 @@ def main() -> None:
         if pattern and not pattern.search(line):
             continue  # salta le righe che non combaciano con il filtro
 
-        logging.debug("Forwarding: %s", line)
-        send_telegram_message(f"[{CONTAINER_NAME}] {line}")
+        # Estrai l'ultima sottostringa che contiene un elemento della regex
+        last_match = None
+        if pattern:
+            matches = list(pattern.finditer(line))
+            if matches:
+                last_match = matches[-1]
+                # Prendi la sottostringa dalla posizione dell'ultimo match fino alla fine
+                line = line[last_match.start():]
+
+        # Controllo che la sottostringa non sia vuota e non superi 4096 caratteri
+        if line and len(line) > 4096:
+            line = line[-4096:]
+        if line:
+            send_telegram_message(f"[{CONTAINER_NAME}] {line}")
 
 if __name__ == "__main__":
     try:
