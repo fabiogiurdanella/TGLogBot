@@ -29,16 +29,9 @@ def send_telegram_message(text: str) -> None:
     """Invia `text` alla chat Telegram specificata."""
     try:
         # Telegram ha un limite di 4096 caratteri per messaggio
-        # Estraggo, a partire dalla fine, solo la stringa che inizia per la prima occorrenza di crypto_trading_logger
-
         if len(text) > 4096:
             text = text[-4096:]
-
-        text = text.split("crypto_trading_logger", 1)[-1].lstrip(" -")
-
-        if not text:
-            return  # niente da inviare
-
+            
         asyncio.run(bot.send_message(chat_id=CHAT_ID, text=text))
     except TelegramError as exc:
         logging.error("Errore Telegram: %s", exc)
