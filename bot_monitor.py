@@ -25,38 +25,44 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 
-def send_telegram_message(text: str) -> None:
-    """Invia `text` alla chat Telegram specificata."""
-    try:
-        asyncio.run(bot.send_message(chat_id=CHAT_ID, text=text))
-    except TelegramError as exc:
-        logging.error("Errore Telegram: %s", exc)
+async def telegram_worker(queue: asyncio.Queue):
+    while True:
+        text = await queue.get()
+        try:
+            await bot.send_message(chat_id=CHAT_ID, text=text)
+        except TelegramError as exc:
+            logging.error("Errore Telegram: %s", exc)
+        await asyncio.sleep(0.5)  # Delay per evitare flood
+        queue.task_done()
 
-
-def main() -> None:
+def main():
     container = dockercli.containers.get(CONTAINER_NAME)
     logging.info("In ascolto dei log di '%s'...", CONTAINER_NAME)
-
-    # stream=True restituisce un generatore che blocca finché arrivano log
     log_stream = container.logs(stream=True, follow=True, tail=0)
 
-    for raw_line in log_stream:
-        line = raw_line.decode("utf-8", errors="replace").rstrip()
+    async def process_logs():
+        queue = asyncio.Queue()
+        worker = asyncio.create_task(telegram_worker(queue))
+        try:
+            for raw_line in log_stream:
+                line = raw_line.decode("utf-8", errors="replace").rstrip()
+                if LOGGER_NAME and LOGGER_NAME in line:
+                    msg = line.split(LOGGER_NAME, 1)[-1].lstrip(" -:")
+                    if msg:
+                        if len(msg) > 4096:
+                            msg = msg[-4096:]
+                        await queue.put(f"[{CONTAINER_NAME}] {msg}")
+        except KeyboardInterrupt:
+            logging.info("Arresto richiesto dall'utente.")
+        finally:
+            await queue.join()
+            worker.cancel()
+            try:
+                await worker
+            except asyncio.CancelledError:
+                pass
 
-        # Invia solo se LOGGER_NAME è presente nella riga
-        if LOGGER_NAME and LOGGER_NAME in line:
-            # Estrai la sottostringa dopo la prima occorrenza di LOGGER_NAME
-            msg = line.split(LOGGER_NAME, 1)[-1].lstrip(" -:")
-            # Controlla che la stringa non sia vuota e non superi 4096 caratteri
-            if msg:
-                if len(msg) > 4096:
-                    msg = msg[-4096:]
-                send_telegram_message(f"[{CONTAINER_NAME}] {msg}")
-                # Timeout per evitare flood
-                asyncio.run(asyncio.sleep(0.5))
+    asyncio.run(process_logs())
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        logging.info("Arresto richiesto dall'utente.")
+    main()
