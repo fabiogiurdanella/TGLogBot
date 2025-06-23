@@ -31,7 +31,7 @@ logging.basicConfig(level=logging.INFO,
 # ------------------------------------------------------------------#
 # Producer: legge i log e mette ogni riga nella coda                #
 # ------------------------------------------------------------------#
-async def stream_logs(queue: asyncio.Queue, *, tag: Optional[str]) -> None:
+async def stream_logs(queue: asyncio.Queue, tag: str) -> None:
     docker = from_env()
     container = docker.containers.get(CONTAINER_NAME)
     logging.info("In ascolto dei log di '%s' …", CONTAINER_NAME)
