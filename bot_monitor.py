@@ -3,7 +3,7 @@ import asyncio
 import logging
 import os
 import time
-from typing import Optional
+import re
 
 from docker import from_env
 from telegram.error import TelegramError
@@ -16,7 +16,8 @@ from telegram.ext import Application, AIORateLimiter
 BOT_TOKEN      = os.getenv("BOT_TOKEN")       # token BotFather
 CHAT_ID        = os.getenv("CHAT_ID")         # chat o gruppo di destinazione
 CONTAINER_NAME = os.getenv("CONTAINER_NAME")  # nome o ID del container
-LOGGER_NAME    = os.getenv("LOGGER_NAME")     # (opzionale) tag logger da filtrare
+LOG_NAME    = os.getenv("LOG_NAME", None)     # (opzionale) tag logger da filtrare
+LOG_REGEX   = os.getenv("LOG_REGEX", None)    # (opzionale) regex per filtrare i log
 
 if not all([BOT_TOKEN, CHAT_ID, CONTAINER_NAME]):
     raise RuntimeError("BOT_TOKEN, CHAT_ID e CONTAINER_NAME sono obbligatori")
@@ -31,7 +32,7 @@ logging.basicConfig(level=logging.INFO,
 # ------------------------------------------------------------------#
 # Producer: legge i log e mette ogni riga nella coda                #
 # ------------------------------------------------------------------#
-async def stream_logs(queue: asyncio.Queue, tag: str) -> None:
+async def stream_logs(queue: asyncio.Queue) -> None:
     docker = from_env()
     container = docker.containers.get(CONTAINER_NAME)
     logging.info("In ascolto dei log di '%s' …", CONTAINER_NAME)
@@ -46,12 +47,16 @@ async def stream_logs(queue: asyncio.Queue, tag: str) -> None:
         line = raw.decode("utf-8", "replace").rstrip()
 
         # Facoltativo: filtra solo le righe che contengono il tag del logger
-        if tag and tag not in line:
+        if LOG_NAME and LOG_NAME not in line:
+            continue
+
+        # Facoltativo: filtra le righe che non corrispondono alla regex
+        if LOG_REGEX and not re.search(LOG_REGEX, line):
             continue
 
         # Rimuove il tag dal testo (se presente)
-        if tag:
-            line = line.split(tag, 1)[-1].lstrip(" -:")
+        if LOG_NAME:
+            line = line.split(LOG_NAME, 1)[-1].lstrip(" -:")
 
         # Telegram consente max 4096 caratteri per messaggio
         await queue.put(line[-4096:])
@@ -89,8 +94,8 @@ async def main() -> None:
     # Coda: ogni elemento è un singolo messaggio di log
     queue = asyncio.Queue(maxsize=1000)     # back-pressure minimo
 
-    producer = asyncio.create_task(stream_logs(queue, tag=LOGGER_NAME))
-    sender   = asyncio.create_task(telegram_sender(bot, queue))
+    producer = asyncio.create_task(stream_logs(queue=queue))
+    sender   = asyncio.create_task(telegram_sender(bot=bot, queue=queue))
 
     try:
         await asyncio.gather(producer, sender)
