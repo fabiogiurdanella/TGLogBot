@@ -1,68 +1,110 @@
-import os
-import re
-import logging
-from docker import from_env
-from telegram import Bot
+#!/usr/bin/env python3
 import asyncio
-from telegram.error import TelegramError
+import logging
+import os
+import time
+from typing import Optional
 
-# --- Config da variabili d'ambiente ------------------------------
-BOT_TOKEN       = os.getenv("BOT_TOKEN")        # token BotFather
-CHAT_ID         = os.getenv("CHAT_ID")          # chat / gruppo di destinazione
-CONTAINER_NAME  = os.getenv("CONTAINER_NAME")   # nome o ID del container
-LOGGER_NAME     = os.getenv("LOGGER_NAME")           # nome del logger Python
-# -----------------------------------------------------------------
+from docker import from_env
+from telegram.error import TelegramError
+from telegram.ext import Application, AIORateLimiter
+
+
+# ------------------------------------------------------------------#
+# Variabili d'ambiente obbligatorie                                 #
+# ------------------------------------------------------------------#
+BOT_TOKEN      = os.getenv("BOT_TOKEN")       # token BotFather
+CHAT_ID        = os.getenv("CHAT_ID")         # chat o gruppo di destinazione
+CONTAINER_NAME = os.getenv("CONTAINER_NAME")  # nome o ID del container
+LOGGER_NAME    = os.getenv("LOGGER_NAME")     # (opzionale) tag logger da filtrare
 
 if not all([BOT_TOKEN, CHAT_ID, CONTAINER_NAME]):
-    raise RuntimeError("BOT_TOKEN, CHAT_ID e CONTAINER_NAME sono obbligatori.")
+    raise RuntimeError("BOT_TOKEN, CHAT_ID e CONTAINER_NAME sono obbligatori")
 
-bot       = Bot(BOT_TOKEN)
-dockercli = from_env()          # usa /var/run/docker.sock montato nel container
+# ------------------------------------------------------------------#
+# Logging locale                                                    #
+# ------------------------------------------------------------------#
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(message)s")
 
-# Logging locale (non mandiamo tutto su Telegram se non serve)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
 
-async def telegram_worker(queue: asyncio.Queue):
+# ------------------------------------------------------------------#
+# Producer: legge i log e mette ogni riga nella coda                #
+# ------------------------------------------------------------------#
+async def stream_logs(queue: asyncio.Queue, *, tag: Optional[str]) -> None:
+    docker = from_env()
+    container = docker.containers.get(CONTAINER_NAME)
+    logging.info("In ascolto dei log di '%s' …", CONTAINER_NAME)
+
+    # since=… evita di reinviare log storici dopo un riavvio
+    log_stream = container.logs(stream=True,
+                                follow=True,
+                                tail=0,
+                                since=int(time.time()))
+
+    for raw in log_stream:
+        line = raw.decode("utf-8", "replace").rstrip()
+
+        # Facoltativo: filtra solo le righe che contengono il tag del logger
+        if tag and tag not in line:
+            continue
+
+        # Rimuove il tag dal testo (se presente)
+        if tag:
+            line = line.split(tag, 1)[-1].lstrip(" -:")
+
+        # Telegram consente max 4096 caratteri per messaggio
+        await queue.put(line[-4096:])
+
+
+# ------------------------------------------------------------------#
+# Consumer: estrae dalla coda e invia su Telegram                   #
+# ------------------------------------------------------------------#
+async def telegram_sender(bot, queue: asyncio.Queue) -> None:
     while True:
         text = await queue.get()
         try:
             await bot.send_message(chat_id=CHAT_ID, text=text)
         except TelegramError as exc:
+            # Qualsiasi errore (inclusi i rarissimi non-429) viene soltanto loggato
             logging.error("Errore Telegram: %s", exc)
-        await asyncio.sleep(0.5)  # Delay per evitare flood
-        queue.task_done()
-
-def main():
-    container = dockercli.containers.get(CONTAINER_NAME)
-    logging.info("In ascolto dei log di '%s'...", CONTAINER_NAME)
-    log_stream = container.logs(stream=True, follow=True, tail=0)
-
-    async def process_logs():
-        queue = asyncio.Queue()
-        worker = asyncio.create_task(telegram_worker(queue))
-        try:
-            for raw_line in log_stream:
-                line = raw_line.decode("utf-8", errors="replace").rstrip()
-                if LOGGER_NAME and LOGGER_NAME in line:
-                    msg = line.split(LOGGER_NAME, 1)[-1].lstrip(" -:")
-                    if msg:
-                        if len(msg) > 4096:
-                            msg = msg[-4096:]
-                        await queue.put(f"[{CONTAINER_NAME}] {msg}")
-        except KeyboardInterrupt:
-            logging.info("Arresto richiesto dall'utente.")
         finally:
-            await queue.join()
-            worker.cancel()
-            try:
-                await worker
-            except asyncio.CancelledError:
-                pass
+            queue.task_done()
 
-    asyncio.run(process_logs())
+
+# ------------------------------------------------------------------#
+# Main                                                              #
+# ------------------------------------------------------------------#
+async def main() -> None:
+    # Costruiamo l’application con il rate-limiter abilitato
+    application = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .rate_limiter(AIORateLimiter())     # usa i bucket di default
+        .build()
+    )
+    await application.initialize()          # apre la sessione HTTP
+    bot = application.bot                   # lo riutilizzeremo sotto
+
+    # Coda: ogni elemento è un singolo messaggio di log
+    queue = asyncio.Queue(maxsize=1000)     # back-pressure minimo
+
+    producer = asyncio.create_task(stream_logs(queue, tag=LOGGER_NAME))
+    sender   = asyncio.create_task(telegram_sender(bot, queue))
+
+    try:
+        await asyncio.gather(producer, sender)
+    finally:
+        # Terminazione pulita
+        await queue.join()
+        producer.cancel()
+        sender.cancel()
+        await application.shutdown()
+        logging.info("Terminato.")
+
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.info("Interrotto dall’utente.")
