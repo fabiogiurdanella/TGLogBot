@@ -33,8 +33,12 @@ logging.basicConfig(level=logging.INFO,
 # Producer: legge i log e mette ogni riga nella coda                #
 # ------------------------------------------------------------------#
 async def stream_logs(queue: asyncio.Queue) -> None:
-    docker = from_env()
-    container = docker.containers.get(CONTAINER_NAME)
+    try:
+        docker = from_env()
+        container = docker.containers.get(CONTAINER_NAME)
+    except Exception as exc:
+        logging.error("Errore di connessione a Docker o container non trovato: %s", exc)
+        return
     logging.info("In ascolto dei log di '%s' …", CONTAINER_NAME)
 
     # since=… evita di reinviare log storici dopo un riavvio
