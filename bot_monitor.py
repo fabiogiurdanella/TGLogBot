@@ -13,14 +13,14 @@ from telegram.ext import Application, AIORateLimiter
 # ------------------------------------------------------------------#
 # Variabili d'ambiente obbligatorie                                 #
 # ------------------------------------------------------------------#
-BOT_TOKEN      = os.getenv("BOT_TOKEN")       # token BotFather
-CHAT_ID        = os.getenv("CHAT_ID")         # chat o gruppo di destinazione
-CONTAINER_NAME = os.getenv("CONTAINER_NAME")  # nome o ID del container
-LOG_NAME    = os.getenv("LOG_NAME", None)     # (opzionale) tag logger da filtrare
-LOG_REGEX   = os.getenv("LOG_REGEX", None)    # (opzionale) regex per filtrare i log
+BOT_TOKEN      = os.getenv("BOT_TOKEN")
+CHAT_ID        = os.getenv("CHAT_ID")
+CONTAINER_NAME = os.getenv("CONTAINER_NAME")
+LOG_NAME    = os.getenv("LOG_NAME", None)
+LOG_REGEX   = os.getenv("LOG_REGEX", None)
 
 if not all([BOT_TOKEN, CHAT_ID, CONTAINER_NAME]):
-    raise RuntimeError("BOT_TOKEN, CHAT_ID e CONTAINER_NAME sono obbligatori")
+    raise RuntimeError("BOT_TOKEN, CHAT_ID, CONTAINER_NAME sono obbligatori")
 
 # ------------------------------------------------------------------#
 # Logging locale                                                    #
@@ -33,37 +33,25 @@ logging.basicConfig(level=logging.INFO,
 # Producer: legge i log e mette ogni riga nella coda                #
 # ------------------------------------------------------------------#
 async def stream_logs(queue: asyncio.Queue) -> None:
-    try:
-        docker = from_env()
-        container = docker.containers.get(CONTAINER_NAME)
-    except Exception as exc:
-        logging.error("Errore di connessione a Docker o container non trovato: %s", exc)
-        return
-    logging.info("In ascolto dei log di '%s' …", CONTAINER_NAME)
+    docker = from_env()
+    container = docker.containers.get(CONTAINER_NAME)
 
-    # since=… evita di reinviare log storici dopo un riavvio
-    log_stream = container.logs(stream=True,
-                                follow=True,
-                                tail=0,
-                                since=int(time.time()))
+    logging.info("Inizio a leggere i log del container %s", CONTAINER_NAME)
+    
+    loop = asyncio.get_running_loop()
+    
+    def reader():
+        for raw in container.logs(stream=True, follow=True, since=int(time.time() - 60)):
+            line = raw.decode(errors="replace").rstrip()
+            if LOG_NAME and LOG_NAME not in line:
+                continue
+            if LOG_REGEX and not re.search(LOG_REGEX, line):
+                continue
+            # Si consegna il messaggio alla coda, nel thread principale
+            asyncio.run_coroutine_threadsafe(queue.put(line[:4096]), loop)
 
-    for raw in log_stream:
-        line = raw.decode("utf-8", "replace").rstrip()
-
-        # Facoltativo: filtra solo le righe che contengono il tag del logger
-        if LOG_NAME and LOG_NAME not in line:
-            continue
-
-        # Facoltativo: filtra le righe che non corrispondono alla regex
-        if LOG_REGEX and not re.search(LOG_REGEX, line):
-            continue
-
-        # Rimuove il tag dal testo (se presente)
-        if LOG_NAME:
-            line = line.split(LOG_NAME, 1)[-1].lstrip(" -:")
-
-        # Telegram consente max 4096 caratteri per messaggio
-        await queue.put(line[-4096:])
+    # Thread per leggere i log del container
+    await asyncio.to_thread(reader)
 
 
 # ------------------------------------------------------------------#
