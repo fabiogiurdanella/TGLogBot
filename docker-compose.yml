@@ -12,6 +12,5 @@ services:
       - LOG_REGEX=${LOG_REGEX}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./bot_monitor.py:/app/bot_monitor.py
     restart: unless-stopped
     container_name: btb_trace_bot
